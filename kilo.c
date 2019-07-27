@@ -38,6 +38,7 @@ typedef struct erow {
 
 struct editorConfig {
 	int cx, cy;
+	int rowoff;	//what row are we scrolled to
 	int screenrows;
 	int screencols;
 	int numrows;
@@ -271,46 +272,63 @@ void abFree(struct abuff *ab) {
 }
 
 /*** output ***/
+//check if cursor is outside screen on scrolling, and if it is, put it just inside
+void editorScroll() {
+	//remember rowoff refers to top of screen content
+	if (E.cy < E.rowoff) {
+		//cursor above visible window, adjust
+		E.rowoff = E.cy;
+	}
+	if (E.cy > E.rowoff + E.screenrows) {
+		//cursor is below the visible window, adjust
+		E.rowoff = E.cy - E.screenrows + 1;
+	}
+}
+
 void editorDrawRows(struct abuff *ab) {
 	int y;
 	for (y = 0; y < E.screenrows; y++) {
-		//are we drawing a row that is after a text bufer or before
-		//if after do this, else go to else
-		if (y >= E.numrows) {
-			//only display welcome if no file specified
-			if (E.numrows == 0 && y == E.screenrows/3) {
-				if (y == E.screenrows / 3) {
-					char welcome[80];
-					int welcomelen = snprintf(welcome, sizeof(welcome),
-						"Kilo editor -- version %s", KILO_VERSION);
-					//truncate if too long
-					if (welcomelen > E.screencols) {
-						welcomelen = E.screencols;
+		//set filerow to display scrolled rows
+		int filerow = y + E.rowoff;
+		if (filerow >= E.numrows) {
+			if (y >= E.numrows) {
+				//only display welcome if no file specified
+				if (E.numrows == 0 && y == E.screenrows/3) {
+					if (y == E.screenrows / 3) {
+						char welcome[80];
+						int welcomelen = snprintf(welcome, sizeof(welcome),
+							"Kilo editor -- version %s", KILO_VERSION);
+						//truncate if too long
+						if (welcomelen > E.screencols) {
+							welcomelen = E.screencols;
+						}
+						//center welcome
+						int padding = (E.screencols - welcomelen) / 2;
+						if (padding) {
+							abAppend(ab, "~" , 1);
+							padding--;
+						}
+						while (padding--) {
+							abAppend(ab, " ", 1);
+						}
+						abAppend(ab, welcome, welcomelen);
 					}
-					//center welcome
-					int padding = (E.screencols - welcomelen) / 2;
-					if (padding) {
-						abAppend(ab, "~" , 1);
-						padding--;
-					}
-					while (padding--) {
-						abAppend(ab, " ", 1);
-					}
-					abAppend(ab, welcome, welcomelen);
+				}
+				//draw welcome message 1/3 down screen
+				else {
+					abAppend(ab, "~", 1);
 				}
 			}
-			//draw welcome message 1/3 down screen
-			else {
-				abAppend(ab, "~", 1);
-			}
 		}
+		//are we drawing a row that is after a text bufer or before
+		//if after do this, else go to else
 		else {
-			int len = E.row[y].size;
+			int len = E.row[filerow].size;
 			if (len > E.screencols) {
 				len = E.screencols;
 			}
 			//print current line
-			abAppend(ab, E.row[y].chars, len);
+			abAppend(ab, E.row[filerow].chars, len);
 		}
 		//clear line as we redraw
 		abAppend(ab, "\x1b[K", 3);
@@ -322,6 +340,8 @@ void editorDrawRows(struct abuff *ab) {
 }
 
 void editorRefreshScreen() {
+	editorScroll();
+
 	struct abuff ab = ABUFF_INIT;
 
 	//clear cursor and return cursor to home position
@@ -362,7 +382,8 @@ void editorMoveCursor(int key) {
 			}
 			break;
 		case ARROW_DOWN:
-			if (E.cy != E.screenrows - 1) {
+			//don't scroll below EOF
+			if (E.cy < E.numrows) {
 				E.cy++;
 			}
 			break;
@@ -411,6 +432,7 @@ void editorProcessKeyPress() {
 void initEditor() {
 	E.cx = 0;
 	E.cy = 0;
+	E.rowoff = 0;
 	E.numrows = 0;
 	E.row = NULL;
 
