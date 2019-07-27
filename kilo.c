@@ -41,7 +41,7 @@ struct editorConfig {
 	int screenrows;
 	int screencols;
 	int numrows;
-	erow row;
+	erow *row;
 	struct termios orig_termios;
 };
 
@@ -203,6 +203,18 @@ int getWindowSize(int *rows, int *cols) {
 	}
 }
 
+/*** row operations ***/
+void editorAppendRow(char *line_text, size_t len) {
+	//make space in array for new row entry
+	E.row = realloc(E.row, sizeof(erow) * (E.numrows + 1));
+	int at = E.numrows;	//store number rows before appending
+	E.row[at].size = len;
+	E.row[at].chars = malloc(len+1);
+	memcpy(E.row[at].chars, line_text, len);
+	E.row[at].chars[len] = '\0';
+	E.numrows++;
+}
+
 /*** file i/o ***/
 //open and read file from disk
 void editorOpen(char *filename) {
@@ -214,19 +226,14 @@ void editorOpen(char *filename) {
 	char *line = NULL;
 	size_t linecap = 0; //how much memory is allocated for line
 	ssize_t linelen;
-	linelen = getline(&line, &linecap, fp);
-	//EOF or no more lines to read
-	if (linelen != -1) {
+	//read file line by line
+	while ((linelen = getline(&line, &linecap, fp)) != -1) {
 		while (linelen > 0 && (line[linelen-1] == '\n' || line[linelen-1] == '\r')) {
 			linelen--;
 		}
-		//copy row text over
-		E.row.size = linelen;
-		E.row.chars = malloc(linelen + 1);
-		memcpy(E.row.chars, line, linelen);
-		E.row.chars[linelen] = '\0';
-		E.numrows = 1;
+		editorAppendRow(line, linelen);
 	}
+	//EOF or no more lines to read
 	free(line);
 	fclose(fp);
 }
@@ -270,36 +277,40 @@ void editorDrawRows(struct abuff *ab) {
 		//are we drawing a row that is after a text bufer or before
 		//if after do this, else go to else
 		if (y >= E.numrows) {
-			//draw welcome message 1/3 down screen
-			if (y == E.screenrows / 3) {
-				char welcome[80];
-				int welcomelen = snprintf(welcome, sizeof(welcome),
-					"Kilo editor -- version %s", KILO_VERSION);
-				//truncate if too long
-				if (welcomelen > E.screencols) {
-					welcomelen = E.screencols;
+			//only display welcome if no file specified
+			if (E.numrows == 0 && y == E.screenrows/3) {
+				if (y == E.screenrows / 3) {
+					char welcome[80];
+					int welcomelen = snprintf(welcome, sizeof(welcome),
+						"Kilo editor -- version %s", KILO_VERSION);
+					//truncate if too long
+					if (welcomelen > E.screencols) {
+						welcomelen = E.screencols;
+					}
+					//center welcome
+					int padding = (E.screencols - welcomelen) / 2;
+					if (padding) {
+						abAppend(ab, "~" , 1);
+						padding--;
+					}
+					while (padding--) {
+						abAppend(ab, " ", 1);
+					}
+					abAppend(ab, welcome, welcomelen);
 				}
-				//center welcome
-				int padding = (E.screencols - welcomelen) / 2;
-				if (padding) {
-					abAppend(ab, "~" , 1);
-					padding--;
-				}
-				while (padding--) {
-					abAppend(ab, " ", 1);
-				}
-				abAppend(ab, welcome, welcomelen);
 			}
+			//draw welcome message 1/3 down screen
 			else {
 				abAppend(ab, "~", 1);
 			}
 		}
 		else {
-			int len = E.row.size;
+			int len = E.row[y].size;
 			if (len > E.screencols) {
 				len = E.screencols;
 			}
-			abAppend(ab, E.row.chars, len);
+			//print current line
+			abAppend(ab, E.row[y].chars, len);
 		}
 		//clear line as we redraw
 		abAppend(ab, "\x1b[K", 3);
@@ -401,6 +412,7 @@ void initEditor() {
 	E.cx = 0;
 	E.cy = 0;
 	E.numrows = 0;
+	E.row = NULL;
 
 	if (getWindowSize(&E.screenrows, &E.screencols) == -1) {
 		die("getWindowSize");
