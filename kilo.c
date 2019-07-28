@@ -39,6 +39,7 @@ typedef struct erow {
 struct editorConfig {
 	int cx, cy;
 	int rowoff;	//what row are we scrolled to
+	int coloff; //what col are we scrolled to
 	int screenrows;
 	int screencols;
 	int numrows;
@@ -279,9 +280,15 @@ void editorScroll() {
 		//cursor above visible window, adjust
 		E.rowoff = E.cy;
 	}
-	if (E.cy > E.rowoff + E.screenrows) {
+	if (E.cy >= E.rowoff + E.screenrows) {
 		//cursor is below the visible window, adjust
 		E.rowoff = E.cy - E.screenrows + 1;
+	}
+	if (E.cx < E.coloff) {
+		E.coloff = E.cx;
+	}
+	if (E.cx >= E.coloff + E.screencols) {
+		E.coloff = E.cx - E.screencols + 1;
 	}
 }
 
@@ -323,12 +330,16 @@ void editorDrawRows(struct abuff *ab) {
 		//are we drawing a row that is after a text bufer or before
 		//if after do this, else go to else
 		else {
-			int len = E.row[filerow].size;
+			int len = E.row[filerow].size - E.coloff;
+			//user scrolled past EOL, display nothing
+			if (len < 0) {
+				len = 0;
+			}
 			if (len > E.screencols) {
 				len = E.screencols;
 			}
 			//print current line
-			abAppend(ab, E.row[filerow].chars, len);
+			abAppend(ab, &E.row[filerow].chars[E.coloff], len);
 		}
 		//clear line as we redraw
 		abAppend(ab, "\x1b[K", 3);
@@ -353,7 +364,8 @@ void editorRefreshScreen() {
 	//move cursor
 	char buff[32];
 	//terminal uses 1 indexed vals
-	snprintf(buff, sizeof(buff), "\x1b[%d;%dH", E.cy + 1, E.cx + 1);
+	//cursor needs to represent screen not file position
+	snprintf(buff, sizeof(buff), "\x1b[%d;%dH", (E.cy - E.rowoff) + 1, (E.cx - E.coloff) + 1);
 	abAppend(&ab, buff, strlen(buff));
 	
 	abAppend(&ab, "\x1b[?25h", 6);
@@ -372,9 +384,8 @@ void editorMoveCursor(int key) {
 			}
 			break;
 		case ARROW_RIGHT:
-			if (E.cx != E.screencols - 1) {
-				E.cx++;
-			}
+			//allow scroll past EOL
+			E.cx++;
 			break;
 		case ARROW_UP:
 			if (E.cy != 0) {
@@ -433,6 +444,7 @@ void initEditor() {
 	E.cx = 0;
 	E.cy = 0;
 	E.rowoff = 0;
+	E.coloff = 0;
 	E.numrows = 0;
 	E.row = NULL;
 
