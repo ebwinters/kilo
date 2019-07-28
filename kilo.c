@@ -376,6 +376,8 @@ void editorRefreshScreen() {
 
 /*** input ***/
 void editorMoveCursor(int key) {
+	//check if cursor on actual line, and set to line cursor is on
+	erow *row = (E.cy >= E.numrows) ? NULL : &E.row[E.cy];
 	switch(key) {
 		//Logic in each case to make sure cursor stays on screen
 		case ARROW_LEFT:
@@ -384,8 +386,10 @@ void editorMoveCursor(int key) {
 			}
 			break;
 		case ARROW_RIGHT:
-			//allow scroll past EOL
-			E.cx++;
+			//check cursor to the left of EOL
+			if (row && E.cx < row->size) {
+				E.cx++;
+			}
 			break;
 		case ARROW_UP:
 			if (E.cy != 0) {
@@ -398,6 +402,13 @@ void editorMoveCursor(int key) {
 				E.cy++;
 			}
 			break;
+	}
+	
+	//want to make sure we can't go longer line to shorter and be past EOL
+	row = (E.cy >= E.numrows) ? NULL : &E.row[E.cy];
+	int rowlen = row ? row->size : 0;
+	if (E.cx > rowlen) {
+		E.cx = rowlen;
 	}
 }
 
