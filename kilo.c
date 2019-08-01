@@ -48,6 +48,7 @@ struct editorConfig {
 	int screencols;
 	int numrows;
 	erow *row;
+	char *filename;
 	struct termios orig_termios;
 };
 
@@ -273,6 +274,9 @@ void editorAppendRow(char *line_text, size_t len) {
 /*** file i/o ***/
 //open and read file from disk
 void editorOpen(char *filename) {
+	free(E.filename);
+	E.filename = strdup(filename);
+
 	FILE *fp = fopen(filename, "r");
 	if (!fp) {
 		die("fopen");
@@ -401,10 +405,28 @@ void editorDrawRows(struct abuff *ab) {
 		//clear line as we redraw
 		abAppend(ab, "\x1b[K", 3);
 		//make sure last line gets ~
-		if (y < E.screenrows - 1) {
-			abAppend(ab, "\r\n", 2);
-		}
+		abAppend(ab, "\r\n", 2);
 	}
+}
+
+void editorDrawStatusBar(struct abuff *ab) {
+	//switch to inverted text coloring using 7m and draw a inverted row
+	abAppend(ab, "\x1b[7m", 4);
+	char status[80];
+	int len = snprintf(status, sizeof(status), "%.20s - %d lines",
+		E.filename ? E.filename : "[No Name", E.numrows);
+	if (len > E.screencols) {
+		len = E.screencols;
+	}
+	abAppend(ab, status, len);
+
+	//still draw spaces until EOL, so all inverted
+	while (len < E.screencols) {
+		abAppend(ab, " ", 1);
+		len++;
+	}
+	//go back to normal text formatting
+	abAppend(ab, "\x1b[m", 3);
 }
 
 void editorRefreshScreen() {
@@ -417,6 +439,7 @@ void editorRefreshScreen() {
 	abAppend(&ab, "\x1b[H", 3);
 
 	editorDrawRows(&ab);
+	editorDrawStatusBar(&ab);
 
 	//move cursor
 	char buff[32];
@@ -526,10 +549,13 @@ void initEditor() {
 	E.coloff = 0;
 	E.numrows = 0;
 	E.row = NULL;
+	E.filename = NULL;
 
 	if (getWindowSize(&E.screenrows, &E.screencols) == -1) {
 		die("getWindowSize");
 	}
+	//make space for status bar
+	E.screenrows -= 1;
 }
 
 int main(int argc, char *argv[]) {
