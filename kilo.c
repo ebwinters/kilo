@@ -16,6 +16,7 @@
 /*** defines ***/
 #define CTRL_KEY(k) ((k) & 0x1f)
 #define KILO_VERSION "0.0.1"
+#define KILO_TAB_STOP 8
 
 enum editorKey {
 	ARROW_LEFT = 1000,
@@ -33,11 +34,14 @@ enum editorKey {
 //hold data for a row of text
 typedef struct erow {
 	int size;
+	int rsize;
 	char *chars;
+	char *render;
 } erow;
 
 struct editorConfig {
 	int cx, cy;
+	int rx;	//will be greater than cx by however many extra stabs
 	int rowoff;	//what row are we scrolled to
 	int coloff; //what col are we scrolled to
 	int screenrows;
@@ -206,6 +210,52 @@ int getWindowSize(int *rows, int *cols) {
 }
 
 /*** row operations ***/
+int editorRowCxToRx(erow *row, int cx) {
+	int rx = 0;
+	int j;
+	for (j = 0; j < cx; j++) {
+		if (row->chars[j] == '\t') {
+			//tabstop - how many cols to right of last tabstop we are
+			//add to rx to get just to let of next tabstop and rx++ to get on tabstop
+			rx += (KILO_TAB_STOP - 1) - (rx % KILO_TAB_STOP);
+		}
+		rx++;
+	}
+	return rx;
+}
+
+//take chars from row and fill render string
+void editorUpdateRow(erow *row) {
+	free(row->render);
+	
+	int tabs = 0;
+	int j;
+	for (j = 0; j < row->size; j++) {
+		if (row->chars[j] == '\t') {
+			tabs++;
+		}
+	}
+
+	//set correct memory including spaces for amount of tabs found
+	row->render = malloc(row->size + tabs*(KILO_TAB_STOP - 1) + 1);
+
+	int idx = 0;
+	for (j = 0; j < row->size; j++) {
+		if (row->chars[j] == '\t') {
+			//append spaces until tabstop at col divisible by 8
+			row->render[idx++] = ' ';
+			while (idx % KILO_TAB_STOP != 0) {
+				row->render[idx++] = ' ';
+			}
+		}
+		else {
+			row->render[idx++] = row->chars[j];
+		}
+	}	
+	row->render[idx] = '\0';
+	row->rsize = idx;
+}
+
 void editorAppendRow(char *line_text, size_t len) {
 	//make space in array for new row entry
 	E.row = realloc(E.row, sizeof(erow) * (E.numrows + 1));
@@ -214,6 +264,9 @@ void editorAppendRow(char *line_text, size_t len) {
 	E.row[at].chars = malloc(len+1);
 	memcpy(E.row[at].chars, line_text, len);
 	E.row[at].chars[len] = '\0';
+	E.row[at].rsize = 0;
+	E.row[at].render = NULL;
+	editorUpdateRow(&E.row[at]);
 	E.numrows++;
 }
 
@@ -275,6 +328,10 @@ void abFree(struct abuff *ab) {
 /*** output ***/
 //check if cursor is outside screen on scrolling, and if it is, put it just inside
 void editorScroll() {
+	E.rx = 0;
+	if (E.cy < E.numrows) {
+		E.rx = editorRowCxToRx(&E.row[E.cy], E.cx);
+	}
 	//remember rowoff refers to top of screen content
 	if (E.cy < E.rowoff) {
 		//cursor above visible window, adjust
@@ -284,11 +341,11 @@ void editorScroll() {
 		//cursor is below the visible window, adjust
 		E.rowoff = E.cy - E.screenrows + 1;
 	}
-	if (E.cx < E.coloff) {
-		E.coloff = E.cx;
+	if (E.rx < E.coloff) {
+		E.coloff = E.rx;
 	}
-	if (E.cx >= E.coloff + E.screencols) {
-		E.coloff = E.cx - E.screencols + 1;
+	if (E.rx >= E.coloff + E.screencols) {
+		E.coloff = E.rx - E.screencols + 1;
 	}
 }
 
@@ -330,7 +387,7 @@ void editorDrawRows(struct abuff *ab) {
 		//are we drawing a row that is after a text bufer or before
 		//if after do this, else go to else
 		else {
-			int len = E.row[filerow].size - E.coloff;
+			int len = E.row[filerow].rsize - E.coloff;
 			//user scrolled past EOL, display nothing
 			if (len < 0) {
 				len = 0;
@@ -339,7 +396,7 @@ void editorDrawRows(struct abuff *ab) {
 				len = E.screencols;
 			}
 			//print current line
-			abAppend(ab, &E.row[filerow].chars[E.coloff], len);
+			abAppend(ab, &E.row[filerow].render[E.coloff], len);
 		}
 		//clear line as we redraw
 		abAppend(ab, "\x1b[K", 3);
@@ -365,7 +422,7 @@ void editorRefreshScreen() {
 	char buff[32];
 	//terminal uses 1 indexed vals
 	//cursor needs to represent screen not file position
-	snprintf(buff, sizeof(buff), "\x1b[%d;%dH", (E.cy - E.rowoff) + 1, (E.cx - E.coloff) + 1);
+	snprintf(buff, sizeof(buff), "\x1b[%d;%dH", (E.cy - E.rowoff) + 1, (E.rx - E.coloff) + 1);
 	abAppend(&ab, buff, strlen(buff));
 	
 	abAppend(&ab, "\x1b[?25h", 6);
@@ -384,11 +441,21 @@ void editorMoveCursor(int key) {
 			if (E.cx != 0) {
 				E.cx--;
 			}
+			//move cursor to end of line above if not first line
+			else if (E.cy > 0) {
+				E.cy --;
+				E.cx = E.row[E.cy].size;
+			}
 			break;
 		case ARROW_RIGHT:
 			//check cursor to the left of EOL
 			if (row && E.cx < row->size) {
 				E.cx++;
+			}
+			//move cursor to next line
+			else if(row && E.cx == row->size) {
+				E.cy++;
+				E.cx = 0;
 			}
 			break;
 		case ARROW_UP:
@@ -454,6 +521,7 @@ void editorProcessKeyPress() {
 void initEditor() {
 	E.cx = 0;
 	E.cy = 0;
+	E.rx = 0;
 	E.rowoff = 0;
 	E.coloff = 0;
 	E.numrows = 0;
