@@ -412,9 +412,10 @@ void editorDrawRows(struct abuff *ab) {
 void editorDrawStatusBar(struct abuff *ab) {
 	//switch to inverted text coloring using 7m and draw a inverted row
 	abAppend(ab, "\x1b[7m", 4);
-	char status[80];
+	char status[80], rtstatus[80];
 	int len = snprintf(status, sizeof(status), "%.20s - %d lines",
 		E.filename ? E.filename : "[No Name", E.numrows);
+	int rtlen = snprintf(rtstatus, sizeof(rtstatus), "%d/%d", E.cy + 1, E.numrows);
 	if (len > E.screencols) {
 		len = E.screencols;
 	}
@@ -422,8 +423,15 @@ void editorDrawStatusBar(struct abuff *ab) {
 
 	//still draw spaces until EOL, so all inverted
 	while (len < E.screencols) {
-		abAppend(ab, " ", 1);
-		len++;
+		//keep printing spaces until just enough space for right status
+		if (E.screencols - len == rtlen) {
+			abAppend(ab, rtstatus, rtlen);
+			break;
+		}
+		else {
+			abAppend(ab, " ", 1);
+			len++;
+		}
 	}
 	//go back to normal text formatting
 	abAppend(ab, "\x1b[m", 3);
