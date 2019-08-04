@@ -6,11 +6,13 @@
 #include <ctype.h>
 #include <errno.h>
 #include <stdio.h>
+#include <stdarg.h>
 #include <stdlib.h>
 #include <string.h>
 #include <sys/ioctl.h>
 #include <sys/types.h>
 #include <termios.h>
+#include <time.h>
 #include <unistd.h>
 
 /*** defines ***/
@@ -49,6 +51,8 @@ struct editorConfig {
 	int numrows;
 	erow *row;
 	char *filename;
+	char statusmsg[80];
+	time_t statusmsg_time;	//erase msg after certain time frame
 	struct termios orig_termios;
 };
 
@@ -435,6 +439,23 @@ void editorDrawStatusBar(struct abuff *ab) {
 	}
 	//go back to normal text formatting
 	abAppend(ab, "\x1b[m", 3);
+	//print new line after first status bar
+	abAppend(ab, "\r\n", 2);
+}
+
+void editorDrawMessageBar(struct abuff *ab) {
+	//clear message bar
+	abAppend(ab, "\x1b[K", 3);
+	int msglen = strlen(E.statusmsg);
+	//cut msg down to width of screen
+	if (msglen > E.screencols) {
+		msglen = E.screencols;
+	}
+	//only display if less than 5s old
+	if (msglen && time(NULL) - E.statusmsg_time < 5) {
+		abAppend(ab, E.statusmsg, msglen);
+	}
+
 }
 
 void editorRefreshScreen() {
@@ -448,6 +469,7 @@ void editorRefreshScreen() {
 
 	editorDrawRows(&ab);
 	editorDrawStatusBar(&ab);
+	editorDrawMessageBar(&ab);
 
 	//move cursor
 	char buff[32];
@@ -460,6 +482,15 @@ void editorRefreshScreen() {
 	
 	write(STDOUT_FILENO, ab.b, ab.len);
 	abFree(&ab);
+}
+
+//
+void editorSetStatusMessage(const char *fmt, ...) {
+	va_list ap;
+	va_start(ap, fmt);	//after fmt is the start of variadic args
+	vsnprintf(E.statusmsg, sizeof(E.statusmsg), fmt, ap);
+	va_end(ap);
+	E.statusmsg_time = time(NULL);	//current epoch time
 }
 
 /*** input ***/
@@ -558,12 +589,14 @@ void initEditor() {
 	E.numrows = 0;
 	E.row = NULL;
 	E.filename = NULL;
+	E.statusmsg[0] = '\0';
+	E.statusmsg_time = 0;
 
 	if (getWindowSize(&E.screenrows, &E.screencols) == -1) {
 		die("getWindowSize");
 	}
 	//make space for status bar
-	E.screenrows -= 1;
+	E.screenrows -= 2;
 }
 
 int main(int argc, char *argv[]) {
@@ -572,6 +605,8 @@ int main(int argc, char *argv[]) {
 	if (argc >= 2) {
 		editorOpen(argv[1]);
 	}
+
+	editorSetStatusMessage("HELP: Ctrl-Q = quit");
 
 	while (1) {
 		editorRefreshScreen();
