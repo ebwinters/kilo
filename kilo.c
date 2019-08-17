@@ -5,6 +5,7 @@
 
 #include <ctype.h>
 #include <errno.h>
+#include <fcntl.h>
 #include <stdio.h>
 #include <stdarg.h>
 #include <stdlib.h>
@@ -21,6 +22,7 @@
 #define KILO_TAB_STOP 8
 
 enum editorKey {
+	BACKSPACE = 127,
 	ARROW_LEFT = 1000,
 	ARROW_RIGHT,
 	ARROW_UP, 
@@ -275,7 +277,52 @@ void editorAppendRow(char *line_text, size_t len) {
 	E.numrows++;
 }
 
+void editorRowInsertChar(erow *row, int at, int c) {
+	//where are we inserting the character
+	if (at < 0 || at > row->size) {
+		at = row->size;
+	}
+	//make room for new char plus null char
+	row->chars = realloc(row->chars, row->size + 2);
+	//assign char to position in row of text
+	memmove(&row->chars[at + 1], &row->chars[at], row->size - at + 1);
+	row->size++;
+	row->chars[at] = c;
+	editorUpdateRow(row);
+}
+
+/*** editor operations ***/
+void editorInsertChar(int c) {
+	if (E.cy == E.numrows) {
+		editorAppendRow("", 0);
+	}
+	editorRowInsertChar(&E.row[E.cy], E.cx, c);
+	E.cx++;
+}
+
 /*** file i/o ***/
+//convert erow to single string that can be saved to file
+char *editorRowsToString(int *buflen) {
+	int totlen = 0;
+	int j;
+	//sum length of each row of text +1 for newline char
+	for (j = 0; j < E.numrows; j++) {
+		totlen += E.row[j].size + 1;
+	}
+	*buflen = totlen;
+
+	char *buf = malloc(totlen);
+	char *p = buf;
+	//loop through rows, append to string with newline char
+	for (j = 0; j < E.numrows; j++) {
+		memcpy(p, E.row[j].chars, E.row[j].size);
+		p += E.row[j].size;
+		*p = '\n';
+		p++;
+	}
+	return buf;
+}
+
 //open and read file from disk
 void editorOpen(char *filename) {
 	free(E.filename);
@@ -301,6 +348,22 @@ void editorOpen(char *filename) {
 	fclose(fp);
 }
 
+void editorSave() {
+	//new file, need to prompt for name
+	if (E.filename == NULL) {
+		return;
+	}
+	int len; 
+	char *buf = editorRowsToString(&len);
+
+	//0644 permissions for text file
+	int fd = open(E.filename, O_RDWR | O_CREAT, 0644);
+	//set file to specific length
+	ftruncate(fd, len);
+	write(fd, buf, len);
+	close(fd);
+	free(buf);
+}
 
 /*** append buffer ***/
 //solves problem of a lot of small writes causing screen to flicker.
@@ -545,10 +608,19 @@ void editorProcessKeyPress() {
 	int c = editorReadKey();
 
 	switch (c) {
+		//handle enter key
+		case '\r':
+			//TODO
+			break;
+
 		case CTRL_KEY('q'):
 			write(STDOUT_FILENO, "\x1b[2J", 4);
 			write(STDOUT_FILENO, "\x1b[H", 3);
 			exit(0);
+			break;
+
+		case CTRL_KEY('s'):
+			editorSave();
 			break;
 
 		//home and end move all the way l/r respectively
@@ -557,6 +629,12 @@ void editorProcessKeyPress() {
 			break;
 		case END_KEY:
 			E.cx = E.screencols - 1;
+			break;
+
+		case BACKSPACE:
+		case CTRL_KEY('h'):	//old backspace esc seq
+		case DEL_KEY:
+			//TODO
 			break;
 
 		case PAGE_UP:
@@ -575,6 +653,15 @@ void editorProcessKeyPress() {
 		case ARROW_LEFT:
 		case ARROW_RIGHT:
 			editorMoveCursor(c);
+			break;
+		
+		//handle refresh and escape
+		case CTRL_KEY('l'):
+		case '\x1b':
+			break;
+
+		default:
+			editorInsertChar(c);
 			break;
 	}
 }
