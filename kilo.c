@@ -52,6 +52,7 @@ struct editorConfig {
 	int screencols;
 	int numrows;
 	erow *row;
+	int dirty;	//do you have unsaved changes?
 	char *filename;
 	char statusmsg[80];
 	time_t statusmsg_time;	//erase msg after certain time frame
@@ -59,6 +60,9 @@ struct editorConfig {
 };
 
 struct editorConfig E;
+
+/*** prototypes ***/
+void editorSetStatusMessage(const char *fmt, ...);
 
 /*** terminal ***/
 void die(const char *s) {
@@ -358,11 +362,20 @@ void editorSave() {
 
 	//0644 permissions for text file
 	int fd = open(E.filename, O_RDWR | O_CREAT, 0644);
-	//set file to specific length
-	ftruncate(fd, len);
-	write(fd, buf, len);
-	close(fd);
+	if (fd != -1) {
+		if (ftruncate(fd, len) != -1) {
+			if (write(fd, buf, len) == len) {
+				close(fd);
+				free(buf);
+				//save success message
+				editorSetStatusMessage("%d bytes written to disk", len);
+				return;
+			}
+		}
+		close (fd);
+	}
 	free(buf);
+	editorSetStatusMessage("Can't save! I/O err: %s", strerror(errno));
 }
 
 /*** append buffer ***/
@@ -547,7 +560,6 @@ void editorRefreshScreen() {
 	abFree(&ab);
 }
 
-//
 void editorSetStatusMessage(const char *fmt, ...) {
 	va_list ap;
 	va_start(ap, fmt);	//after fmt is the start of variadic args
@@ -675,6 +687,7 @@ void initEditor() {
 	E.coloff = 0;
 	E.numrows = 0;
 	E.row = NULL;
+	E.dirty = 0;
 	E.filename = NULL;
 	E.statusmsg[0] = '\0';
 	E.statusmsg_time = 0;
@@ -693,7 +706,7 @@ int main(int argc, char *argv[]) {
 		editorOpen(argv[1]);
 	}
 
-	editorSetStatusMessage("HELP: Ctrl-Q = quit");
+	editorSetStatusMessage("HELP: Ctrl-Q = quit | CTRL-S = save");
 
 	while (1) {
 		editorRefreshScreen();
